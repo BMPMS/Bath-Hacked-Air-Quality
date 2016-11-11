@@ -1,0 +1,187 @@
+---
+title: "Bath Air Quality Sensor Failures - where and when?"
+output: html_document
+---
+
+**Data:**  [Bath Hacked Live Air Quality Data](https://data.bathhacked.org/Environment/-Live-Air-Quality-Sensor-Data/hqr9-djir)
+
+**Time Frame:** 30/08/2014 to 6/11/2016
+
+**Preprocessing:** (Python to CSV file)
+
+a) Deleted Royal Victoria Park data (hasn't worked since 6th October 2014)
+b) Deleted entries where pollutants aren't recorded by sensors (thanks to Tom) - GH/PM10, LR/PM10, LR/CO, LE/CO
+c) Data has been split into two groups: part and total failure
+c) For part failure error counts from Guidhall and London Road Aurn have been divided by four to account for 15 min v hourly data feeds.
+d) Total failures are recorded one per day per station
+d) Sensor Stations abbreviated: Guildhall (GH), London Road Enclosure (LE), London Road AURN (LA), Windsor Bridge (WB)
+
+
+###1. Part Failure: Sensor producing negative/null values for some but not all pollutants.
+
+```{r setup, echo=FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = FALSE,warning=FALSE, message=FALSE)
+library(ggplot2)
+library(lubridate)
+library(plyr)
+library(dplyr)
+
+setwd('/Users/bryonymiles/documents/bathhacked/air')
+
+#load dataset with part failure results
+errors <-read.csv('air_part_failure.csv')
+
+#abbreviate stations
+errors$station <- revalue(errors$station, c("guildhall"="GH"))
+errors$station <- revalue(errors$station, c("londonrdaurn"="LA"))
+errors$station <- revalue(errors$station, c("londonrdenc"="LE"))
+errors$station <- revalue(errors$station, c("windsorbridge"="WB"))
+
+#date manipulation for graphs
+errors$month = month(errors$date_only)
+errors$year = year(errors$date_only)
+errors$quarter = quarter(errors$date_only, with_year = TRUE)
+errors$wday = wday(errors$date_only)
+
+
+adjust_stations <- function(newdata){
+#account for 15 min v hourly entries
+#creates column new_count
+  
+  newdata = mutate(newdata, new_count = count)
+  newdata = within(newdata, new_count[station == "GH"] <- new_count[station == "GH"]/4)
+  newdata = within(newdata, new_count[station == "LA"] <- new_count[station == "LA"]/4)
+
+}
+
+#bar 1: groupby pollutants then station, count, adjust, run
+pollutants <- group_by(errors,pollutant,station)
+errors_total <- summarise(pollutants, count = n())
+errors_total <- adjust_stations(errors_total)
+
+ggplot(errors_total, aes(x=station,y=new_count)) + geom_bar(stat='identity',aes(fill=pollutant)) + xlab("Bath Air Quality Part Failure Errors") + ylab("Total Error Count") 
+
+```
+
+*No part failure errors for London Road Enclosure.  If you look at the distribution by quarter (below), you can see the errors above are mostly isolated to 2014.3 and 2014.4*
+
+```{r by_quarter}
+
+#bar 2: groupby pollutants then station then quarter, count, adjust, run
+pollutants <- group_by(errors,pollutant,station,quarter)
+errors_total <- summarise(pollutants, count = n())
+errors_total <- adjust_stations(errors_total)
+
+ggplot(errors_total, aes(x=station,y=new_count)) + geom_bar(stat='identity',aes(fill=pollutant)) + facet_wrap(~quarter) + xlab("Air Quality Part Failure Errors by QUARTER") + ylab("Error Count") 
+
+```
+
+*Without 2014 values, you can see consistent failures in NO readings at Guildhall and some NO2 reading issues at London Road Aurn*
+
+```{r quarter2}
+#bar 3: filter out 2014, groupby pollutants then station then quarter, count, adjust, run
+new_errors = filter(errors,year > 2014)
+pollutants <- group_by(new_errors,pollutant,station,quarter)
+errors_total <- summarise(pollutants, count = n())
+errors_total <- adjust_stations(errors_total)
+
+ggplot(errors_total, aes(x=station,y=new_count)) + geom_bar(stat='identity',aes(fill=pollutant)) + facet_wrap(~quarter) + xlab("Air Quality Part Failure Errors by QUARTER after 2014") + ylab("Error Count") 
+
+```
+
+*These seem to be happening in the early hours.*  
+
+```{r by_hour}
+
+#bar 4: groupby pollutants then station then hour, count, adjust, run
+pollutants <- group_by(new_errors,pollutant,station,hour)
+errors_total <- summarise(pollutants, count = n())
+errors_total <- adjust_stations(errors_total)
+
+ggplot(errors_total, aes(x=station,y=new_count)) + geom_bar(stat='identity',aes(fill=pollutant))  + facet_wrap(~hour) + xlab("Air Quality Part Failure Errors by HOUR") + ylab("Error Counts") 
+```
+
+
+###2. Total Failure: Sensor producing no valid results, either for some or all of the day.
+
+```{r by_day}
+#new data set with total failure results
+all_errors <-read.csv('air_total_failure.csv')
+
+#abbreviate again
+all_errors$station <- revalue(all_errors$station, c("guildhall"="GH"))
+all_errors$station <- revalue(all_errors$station, c("londonrdaurn"="LA"))
+all_errors$station <- revalue(all_errors$station, c("londonrdenc"="LE"))
+all_errors$station <- revalue(all_errors$station, c("windsorbridge"="WB"))
+
+#set time columns again
+all_errors$wday = wday(all_errors$date_only)
+all_errors$quarter = quarter(all_errors$date_only, with_year = TRUE)
+
+#bar 5: groupby error_type then station, count, run
+pollutants <- group_by(all_errors,error_type,station)
+errors_total <- summarise(pollutants, count = n())
+
+ggplot(errors_total, aes(x=station,y=count)) + geom_bar(stat='identity',aes(fill=error_type)) +  xlab("Air Quality Total Failures") + ylab("Error Counts") 
+
+
+```
+
+*Most of the errors are happening at the weekend (see below).  This would support the PC switched off theory but it's odd that results are coming in for part of the day...*
+
+```{r by_day2}
+
+#bar 6: groupby error_type then station then wday, count, run
+
+pollutants <- group_by(all_errors,error_type,station,wday)
+errors_total <- summarise(pollutants, count = n())
+
+ggplot(errors_total, aes(x=station,y=count)) + geom_bar(stat='identity',aes(fill=error_type))  + facet_wrap(~wday) + xlab("Air Quality Total Failure Errors by DAY") + ylab("Error Counts") 
+
+```
+
+*Looking at the results quarterly (below) the problem was relatively isolated...  2016 results are pretty good.*
+
+```{r}
+
+#bar 7: groupby error_type then station then quarter, count, run
+pollutants <- group_by(all_errors,error_type,station,quarter)
+errors_total <- summarise(pollutants, count = n())
+
+ggplot(errors_total, aes(x=station,y=count)) + geom_bar(stat='identity',aes(fill=error_type))  + facet_wrap(~quarter) + xlab("Air Quality Total Failure Errors by QUARTER") + ylab("Error Counts") 
+
+```
+
+
+*Finally, the distribution of total failure errors over the time period by station and by error type*
+
+```{r lines}
+#set further time variables
+all_errors$year <- year(all_errors$date_only)
+#work around for week - week return week in year
+#add week_mult depending on year of data (1, 2, 3 etc)
+#multiply and delete week_mult
+
+all_errors$week_mult <- all_errors$year
+years <- unique(all_errors$year)
+for (i in 1:length(years)) {
+  all_errors <- within(all_errors, week_mult <- ifelse(week_mult==years[i], i,week_mult ))
+}
+all_errors$week <- week(all_errors$date_only)
+all_errors$week <- all_errors$week * all_errors$week_mult
+all_errors$week_mult <- NULL
+
+#raster 1: groupby station then week, count, run
+by_week <- group_by(all_errors,station,week)
+errors_total <- summarise(by_week, count = n())
+
+ggplot(errors_total, aes(x=week,y=count))+ geom_raster(aes(fill=station,colour=station))+ xlab("Air Quality Total Failure Errors over time period (weeks 0-132)") + ylab("Error Count") 
+
+#raster 2: groupby error_type then week, count, run
+by_week <- group_by(all_errors,error_type,week)
+errors_total <- summarise(by_week, count = n())
+
+ggplot(errors_total, aes(x=week,y=count))+ geom_raster(aes(fill=error_type,colour=error_type))+ xlab("Air Quality Total Failure Errors over time period (weeks 0-132)") + ylab("Error Count") 
+
+```
+
